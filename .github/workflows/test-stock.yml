@@ -1,0 +1,82 @@
+name: 測試丸久商品頁
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 安裝瀏覽器工具
+        run: |
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
+
+      - name: 測試讀取又玄商品頁
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from playwright.sync_api import sync_playwright
+
+          url = "https://www.marukyu-koyamaen.co.jp/english/shop/products/1171020c1"
+
+          with sync_playwright() as p:
+              browser = p.chromium.launch()
+              page = browser.new_page()
+              try:
+                  response = page.goto(
+                      url,
+                      wait_until="domcontentloaded",
+                      timeout=60000
+                  )
+                  page.wait_for_timeout(5000)
+
+                  status = response.status if response else None
+                  print("網頁回應：", status)
+                  print("網頁標題：", page.title())
+
+                  page.screenshot(path="result.png", full_page=True)
+
+                  text = page.locator("body").inner_text()
+                  print("頁面文字預覽：")
+                  print(text[:5000])
+
+                  element = page.locator("[data-product_variations]").first
+                  if element.count():
+                      raw = element.get_attribute("data-product_variations")
+                      data = json.loads(raw)
+                      if isinstance(data, list):
+                          for item in data:
+                              if str(item.get("sku", "")).upper() in [
+                                  "1171020C1", "1171040C1"
+                              ]:
+                                  print("容量庫存資料：", json.dumps({
+                                      "sku": item.get("sku"),
+                                      "is_in_stock": item.get("is_in_stock"),
+                                      "is_purchasable": item.get("is_purchasable")
+                                  }, ensure_ascii=False))
+                      else:
+                          print("尚未取得各容量庫存資料")
+                  else:
+                      print("頁面未提供 data-product_variations")
+
+                  if status != 200 or "Yugen" not in text:
+                      raise RuntimeError("尚未成功讀取商品內容")
+              finally:
+                  browser.close()
+          PY
+
+      - name: 保存測試畫面
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-page
+          path: result.png
+          if-no-files-found: ignore
+          retention-days: 1
